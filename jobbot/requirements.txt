@@ -1,0 +1,9 @@
+requests>=2.31
+urllib3>=2.0
+pandas>=2.0
+streamlit>=1.40
+
+# Optional: cover letter and resume tailoring. Without this (and an
+# ANTHROPIC_API_KEY), the review queue still works and gives you a targeting
+# brief instead of a draft.
+anthropic>=0.40

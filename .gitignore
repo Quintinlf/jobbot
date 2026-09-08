@@ -1,0 +1,17 @@
+# Everything personal lives under data/ and none of it belongs in a repo:
+# the applicant profile, the SQLite database of applications, résumé PDFs,
+# and the persistent browser profile with its logged-in session cookies.
+jobbot/data/
+data/
+
+# Secrets
+.env
+*.env
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+.DS_Store

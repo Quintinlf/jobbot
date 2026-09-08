@@ -1,0 +1,90 @@
+{
+  "_comment": [
+    "Copy this to jobbot/data/profile.json and fill it in. That path is",
+    "gitignored, and it should stay that way: the real file holds your phone",
+    "number, your EEO answers and your address.",
+    "",
+    "Every `eeo` key below is deliberately empty. Blank means autofill leaves",
+    "the field alone and you answer it yourself on the form, every time. Put a",
+    "value here only for answers you are willing to give to every employer."
+  ],
+
+  "first_name": "Ada",
+  "last_name": "Lovelace",
+  "email": "you@example.com",
+  "phone": "(555) 555-0100",
+  "city": "Los Angeles",
+  "state": "California",
+  "postal_code": "90001",
+
+  "linkedin_url": "https://linkedin.com/in/yourprofile",
+  "github_url": "https://github.com/yourhandle",
+  "portfolio_url": "",
+
+  "background": "One paragraph on what you can do. Not your education.",
+  "narrative": "",
+
+  "projects": [
+    {
+      "name": "Example Project",
+      "summary": "What it does and what you learned building it.",
+      "url": "https://github.com/yourhandle/example",
+      "stack": ["Python", "SQLite"]
+    }
+  ],
+  "work_experience": [
+    {
+      "title": "Software Engineering Intern",
+      "company": "Example Co",
+      "start": "2025-06",
+      "end": "2025-09",
+      "summary": "What you actually shipped."
+    }
+  ],
+  "skills": ["Python", "SQL", "Git"],
+
+  "education": "",
+  "major": "",
+  "coursework": [],
+  "certifications": [],
+  "accomplishments": [],
+
+  "resume_path": "jobbot/data/resumes/resume.pdf",
+  "work_authorized": true,
+  "requires_sponsorship": false,
+
+  "eeo": {
+    "gender": "",
+    "hispanic_ethnicity": "",
+    "race": "",
+    "veteran_status": "",
+    "disability": "",
+    "sexual_orientation": "",
+    "transgender": ""
+  },
+  "eeo_random": {},
+
+  "agreements": {
+    "privacy_policy": "",
+    "interview_recording": "",
+    "recruiting_sms": "",
+    "marketing_sms": "",
+    "terms": ""
+  },
+
+  "custom_answers": {
+    "eligible to work|authorized to work|legally authorized": "Yes",
+    "require sponsorship|need sponsorship": "No",
+    "pronoun": "",
+    "how did you (?:first )?(?:hear|learn|find)": "Other",
+    "which (?:u\\.s\\.?\\s*)?state|state (?:you|where you).{0,20}(?:reside|live)": "California",
+    "desired salary|salary expectation|compensation expectation": ""
+  },
+
+  "target_roles": [
+    "Software Engineer",
+    "Data Engineer",
+    "Machine Learning Engineer"
+  ],
+  "excluded_companies": []
+}
