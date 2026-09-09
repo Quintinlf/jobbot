@@ -227,6 +227,21 @@ DEPARTMENT_KNOCKOUTS: tuple[str, ...] = (
     # of jobs to apply to. None of them are reachable with a software
     # background and none of them are the job he is looking for.
     "marine engineer",
+    # Skilled trades at universities and public agencies. "engineer" is worth
+    # +4 as a bare term and an LA location +52, which was enough to put
+    # UCLA's "Service Engineer" -- a commercial refrigeration technician --
+    # fourth in a batch of jobs to apply to.
+    "refrigeration",
+    "hvac",
+    "plumb",
+    "electrician",
+    "custodial",
+    "steam operating",
+    "locksmith",
+    "groundskeep",
+    # Recruiting again, under a name the existing terms miss.
+    "talent sourcer",
+    "sourcer",
     # Not interested in game development (said 2026-09-07). Titles, not
     # companies -- a studio can post a plain backend role, and the
     # studios themselves are in profile.excluded_companies.
@@ -252,6 +267,47 @@ DEPARTMENT_KNOCKOUTS: tuple[str, ...] = (
     "cashier",
     "store associate",
 )
+
+# Trades vocabulary, checked against the DESCRIPTION and only for postings
+# whose title carried no strong role term. UCLA's "Service Engineer" is a
+# commercial refrigeration technician: the title matched nothing but the bare
+# "engineer" (+4), the word "refrigeration" never appears in it, and an LA
+# location (+52) carried it to fourth in a batch of jobs to apply to.
+#
+# Deliberately only applied when the title said nothing specific. A building
+# automation startup hiring a Software Engineer will say "HVAC" in its
+# description too, and that posting should survive.
+TRADES_TERMS: tuple[str, ...] = (
+    "refrigeration",
+    "hvac",
+    "journey-level",
+    "journeyman",
+    "boiler",
+    "pipefitting",
+    "sheet metal",
+    "hand tools",
+    "power tools",
+    "forklift",
+    "scaffold",
+    "electrical wiring",
+    "preventive maintenance of equipment",
+)
+
+# Posted pay bands, read as a seniority signal rather than as money.
+#
+# California requires the range for the level a requisition is written for, so
+# the floor says which rung it was written for — and it says so more reliably
+# than the title, which is how "Site Reliability Engineer" at $175K-$250K and
+# "Software Engineer" at $140K-$190K end up looking identical to a scorer that
+# only reads words. Blaxel posts both.
+#
+# Below SALARY_ENTRY_CEILING is a band an entry candidate is inside. Above
+# SALARY_SENIOR_FLOOR the requisition is written for someone with years this
+# profile does not have, and applying reads as not having read the posting.
+# Between them is the ordinary case and costs nothing.
+SALARY_ENTRY_CEILING = 150_000
+SALARY_SENIOR_FLOOR = 170_000
+SALARY_SENIOR_PENALTY = 18
 
 # Years-of-experience ceiling. A posting asking for more than this is a stretch.
 MAX_YEARS_EXPERIENCE = 3
@@ -369,14 +425,71 @@ _US_SIGNAL = re.compile(
 )
 
 
+# US places named often enough to stand alone in a location field, with no
+# country and no state code beside them. "San Francisco" and "New York" were
+# reading as "names nowhere in the US" — a gap that only surfaces once
+# something depends on it, here a check that would otherwise have called San
+# Francisco roles foreign.
+_US_PLACES = re.compile(
+    r"\b(?:san francisco|new york|nyc|brooklyn|los angeles|san diego|san jose|"
+    r"santa monica|palo alto|menlo park|mountain view|sunnyvale|oakland|"
+    r"seattle|portland|austin|dallas|houston|denver|boulder|chicago|boston|"
+    r"cambridge|atlanta|miami|philadelphia|pittsburgh|detroit|minneapolis|"
+    r"phoenix|salt lake city|nashville|charlotte|raleigh|durham|"
+    r"arlington|bellevue|irvine|pasadena|long beach|culver city|marina del rey|"
+    r"bay area|silicon valley|"
+    r"california|texas|new jersey|massachusetts|colorado|illinois|georgia|"
+    r"virginia|maryland|florida|arizona|oregon|utah|michigan|minnesota|"
+    r"pennsylvania|north carolina|tennessee)\b",
+    re.IGNORECASE,
+)
+
+# Country families, for reading nationality out of a description rather than a
+# location field. Bree's "Machine Learning Engineer, Underwriting" listed its
+# location as "Remote", scored 96 — the highest in the queue — and is a
+# Canadian consumer-finance company: three mentions of Canada or Canadians and
+# not one of the US. Counting "canada" alone missed it, because the word in
+# the posting was "Canadians".
+FOREIGN_COUNTRY_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("Canada", r"canad(?:a|ian|ians)\b"),
+    ("India", r"\bindia\b|\bindian\b|bengaluru|bangalore"),
+    ("the UK", r"united kingdom|\bbritish\b|\bbritain\b|\blondon\b"),
+    ("Australia", r"australia|\bsydney\b|melbourne"),
+    ("Germany", r"\bgerman(?:y|s)?\b|berlin|munich"),
+    ("France", r"\bfrance\b|\bfrench\b|\bparis\b"),
+    ("Brazil", r"brazil|brasil"),
+    ("Mexico", r"\bmexico\b|mexican"),
+    ("Singapore", r"singapore"),
+    ("Japan", r"\bjapan\b|japanese|tokyo"),
+)
+
+
 def names_us_location(location: str) -> bool:
-    """Whether this location field concretely names somewhere in the US.
+    """Whether this text concretely names somewhere in the US.
 
     Distinct from `not looks_non_us(...)`: a bare "Remote" is not non-US, but
-    it does not name the US either. That gap is what lets a title override a
-    location field — see the title check in `scoring.score_posting`.
+    it does not name the US either. That gap is what lets a title or a
+    description override a location field — see `scoring.score_posting`.
     """
-    return bool(_US_SIGNAL.search((location or "").lower()))
+    text = (location or "").lower()
+    return bool(_US_SIGNAL.search(text) or _US_PLACES.search(text))
+
+
+def foreign_country_in(description: str, min_mentions: int = 2) -> str | None:
+    """The country a description belongs to, when it clearly is not the US.
+
+    Deliberately requires both halves: a country named repeatedly AND the US
+    named nowhere at all. A US company selling into Canada mentions Canada; it
+    also mentions the US. Returns None on any ambiguity, because the cost of a
+    false positive here is hiding a job that was reachable.
+    """
+    text = (description or "").lower()
+    if not text or names_us_location(text):
+        return None
+    for name, pattern in FOREIGN_COUNTRY_PATTERNS:
+        if len(re.findall(pattern, text)) >= min_mentions:
+            return name
+    return None
 
 
 def looks_non_us(location: str) -> bool:

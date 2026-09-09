@@ -104,12 +104,37 @@ def score_location(location: str) -> tuple[int, str | None]:
     return 0, None
 
 
+def score_salary(salary_min: int | None) -> tuple[int, str | None]:
+    """Points for the posted pay band, read as seniority rather than money.
+
+    California requires the range for the level a requisition is written for,
+    so the floor of the band says which rung it is — more reliably than the
+    title does. Blaxel posts a Site Reliability Engineer at $175K-$250K and a
+    Software Engineer at $140K-$190K; to a scorer reading only words those are
+    the same seniority, and they are not.
+
+    A band with no floor published says nothing and costs nothing.
+    """
+    if not salary_min:
+        return 0, None
+    if salary_min >= config.SALARY_SENIOR_FLOOR:
+        return (
+            -config.SALARY_SENIOR_PENALTY,
+            f"band starts at ${salary_min:,} — written for a senior "
+            f"(-{config.SALARY_SENIOR_PENALTY})",
+        )
+    if salary_min <= config.SALARY_ENTRY_CEILING:
+        return 4, f"band starts at ${salary_min:,} — an entry band (+4)"
+    return 0, None
+
+
 def score_posting(
     title: str,
     description: str,
     location: str = "",
     verdict: GateVerdict | None = None,
     profile_skills: set[str] | None = None,
+    salary_min: int | None = None,
 ) -> tuple[Score, GateVerdict, WorksiteVerdict]:
     """Score one posting, classify its eligibility gate and work arrangement.
 
@@ -137,11 +162,29 @@ def score_posting(
 
     # ── Role fit ───────────────────────────────────────────────────────────────
     matched_role = False
+    strong_title_role = False
     for term, pts in config.ROLE_TERMS.items():
         if term in title_lc:
             total += pts
             reasons.append(f"role: {term!r} (+{pts})")
             matched_role = True
+            if pts >= 8:
+                strong_title_role = True
+
+    # A title carrying nothing but the bare "engineer"/"developer" says almost
+    # nothing, and everything after this point is blind to what the job is. If
+    # the description then reads like a trade, it is a trade: UCLA's "Service
+    # Engineer" is a commercial refrigeration technician and was reaching
+    # fourth place in a batch on +4 for the word and +52 for being in LA.
+    if not strong_title_role and description:
+        desc_head = description.lower()[:3000]
+        for term in config.TRADES_TERMS:
+            if term in desc_head:
+                return (
+                    Score(total=0, knockout=f"skilled trade, not software: {term!r}"),
+                    verdict,
+                    site,
+                )
 
     if not matched_role:
         # Fall back to the description so oddly-titled roles still surface,
@@ -204,10 +247,26 @@ def score_posting(
     if config.looks_non_us(title) and not config.names_us_location(location):
         effective_location = title
         reasons.append(f"title names a non-US location: {title!r}")
+    elif not config.names_us_location(location):
+        # Neither the location field nor the title says where this is, so ask
+        # the description. Bree's "Machine Learning Engineer, Underwriting"
+        # listed "Remote", scored 96 — the highest in the queue — and is a
+        # Canadian consumer-finance company: three mentions of Canadians, none
+        # of the US. `foreign_country_in` needs both halves before it answers,
+        # because the cost of being wrong here is hiding a reachable job.
+        if country := config.foreign_country_in(description):
+            effective_location = country
+            reasons.append(f"description places this in {country}, not the US")
     loc_pts, loc_reason = score_location(effective_location)
     total += loc_pts
     if loc_reason:
         reasons.append(loc_reason)
+
+    # ── Posted pay band ────────────────────────────────────────────────────────
+    pay_pts, pay_reason = score_salary(salary_min)
+    total += pay_pts
+    if pay_reason:
+        reasons.append(pay_reason)
 
     # ── Gate adjustment ────────────────────────────────────────────────────────
     # This is the dropout-aware part: postings that explicitly accept

@@ -91,6 +91,12 @@ class Posting:
     board_slug: str
     department: str = ""
     posted_at: str = ""
+    # Posted pay band, when the board publishes one. The floor is the useful
+    # half: it says which rung the requisition was written for, which the
+    # title often does not.
+    salary_min: int | None = None
+    salary_max: int | None = None
+    salary_summary: str = ""
     raw: dict = field(default_factory=dict, repr=False)
 
     def as_row(self) -> dict:
@@ -105,6 +111,9 @@ class Posting:
             "board_slug": self.board_slug,
             "department": self.department,
             "posted_at": self.posted_at,
+            "salary_min": self.salary_min,
+            "salary_max": self.salary_max,
+            "salary_summary": self.salary_summary,
         }
 
 
@@ -222,6 +231,30 @@ def fetch_lever(slug: str) -> list[Posting]:
 
 # ── Ashby ──────────────────────────────────────────────────────────────────────
 
+def _ashby_salary(job: dict) -> tuple[int | None, int | None, str]:
+    """The annual salary band from an Ashby posting, if it publishes one.
+
+    `includeCompensation=true` has always been on the request URL and the
+    answer was always thrown away. Equity components are skipped: a percentage
+    is not a number this can compare against a salary floor.
+    """
+    comp = job.get("compensation") or {}
+    for component in comp.get("summaryComponents") or []:
+        if component.get("compensationType") != "Salary":
+            continue
+        if component.get("interval") not in ("1 YEAR", "YEAR", None):
+            continue
+        lo, hi = component.get("minValue"), component.get("maxValue")
+        summary = (comp.get("scrapeableCompensationSalarySummary")
+                   or comp.get("compensationTierSummary") or "")
+        return (
+            int(lo) if isinstance(lo, (int, float)) else None,
+            int(hi) if isinstance(hi, (int, float)) else None,
+            summary,
+        )
+    return None, None, ""
+
+
 def fetch_ashby(slug: str) -> list[Posting]:
     url = (
         "https://api.ashbyhq.com/posting-api/job-board/"
@@ -233,8 +266,12 @@ def fetch_ashby(slug: str) -> list[Posting]:
 
     postings = []
     for job in data.get("jobs") or []:
+        lo, hi, summary = _ashby_salary(job)
         postings.append(
             Posting(
+                salary_min=lo,
+                salary_max=hi,
+                salary_summary=summary,
                 external_id=f"ashby:{slug}:{job.get('id')}",
                 title=(job.get("title") or "").strip(),
                 company=slug,

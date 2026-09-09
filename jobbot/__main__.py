@@ -1556,6 +1556,13 @@ def cmd_hunt(args) -> int:
                 lettered.append(row)
                 topped_up += 1
 
+    # Having a letter earns a posting a place in the batch; it does not earn it
+    # the top of the batch. Without this a USC "Project Assistant" scoring 16
+    # led a sitting of 25 because it happened to be the one job with a letter
+    # written, above a 96-point ML engineering role. You work down the tabs in
+    # order, so the order is the recommendation.
+    lettered.sort(key=lambda r: -(r["score"] or 0))
+
     if not lettered:
         print("Nothing reachable and unopened. Try `python -m jobbot refresh`.")
         return 1

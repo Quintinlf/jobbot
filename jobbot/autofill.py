@@ -318,10 +318,10 @@ def build_specs(profile: Profile) -> list[FieldSpec]:
         FieldSpec("full_name", profile.full_name,
                   [r"^full[\s_-]*name", r"^name$", r"your name"]),
         # `matches` searches label+name+id+placeholder joined together, so an
-        # anchored "^name$" never fires. The label leads the blob, so "^name"
+        # anchored "^name$" never fires. The label leads the blob, so "^name\b"
         # picks out Ashby's single Name field without also claiming "First Name".
         FieldSpec("full_name", profile.full_name,
-                  [r"^name", r"full[\s_-]*name", r"legal name",
+                  [r"^name\b", r"full[\s_-]*name", r"legal name",
                    r"_systemfield_name"]),
         FieldSpec("email", profile.email, [r"e-?mail"]),
         FieldSpec("phone", profile.phone, [r"phone", r"mobile", r"telephone"]),
@@ -527,17 +527,34 @@ def _describe(el) -> tuple[str, str, str, str]:
 # actual Submit button, and no amount of surrounding context makes clicking it
 # safe — a page that merely looked form-less would send the application.
 _REVEAL_TEXT = re.compile(
-    r"^\s*(?:apply(?:\s+(?:for\s+this\s+job|now|here|to\s+this\s+role))?"
+    r"^\s*(?:apply(?:\s+(?:for\s+this\s+job|now|here|manually|to\s+this\s+role))?"
     r"|application"
     r"|start\s+(?:your\s+)?application"
     r"|continue\s+to\s+application)\s*$",
     re.IGNORECASE,
 )
 
-# Anything that would take us off the posting instead of opening its form.
+# Workday's "Start Your Application" dialog offers four ways in, stacked in
+# this DOM order: Autofill with Resume, Apply Manually, Use My Last
+# Application, Apply With LinkedIn. Taking the first match would take the
+# first one, so the wanted route gets a pass of its own before the general
+# sweep.
+#
+# "Apply Manually" is the wanted route deliberately. "Autofill with Resume"
+# hands Workday the PDF and lets its parser populate the form, overwriting
+# fields with whatever it believes it read — and the bargain this whole module
+# rests on is that a field is either filled from the profile or left for a
+# human to answer.
+_REVEAL_PREFERRED = re.compile(r"^\s*apply\s+manually\s*$", re.IGNORECASE)
+
+# Anything that would take us off the posting instead of opening its form, or
+# that opens it the wrong way. "Use my last application" replays an earlier
+# submission wholesale, which is a different application than the one being
+# prepared here.
 _REVEAL_EXCLUDE = re.compile(
     r"linkedin|indeed|glassdoor|sign\s*in|log\s*in|create|share|refer|"
-    r"other\s+jobs|all\s+jobs|back\b",
+    r"other\s+jobs|all\s+jobs|back\b|"
+    r"autofill|use\s+my\s+last",
     re.IGNORECASE,
 )
 
@@ -582,43 +599,50 @@ def open_application_form(page, settle_ms: int = 2500) -> str:
     candidates = (
         "button", "a", "[role=button]", "[role=tab]", "[data-ui=apply-button]",
     )
-    for ctx in (page, *(f for f in getattr(page, "frames", []) or [])):
-        for selector in candidates:
-            try:
-                elements = ctx.query_selector_all(selector)
-            except Exception:
-                continue
-            for el in elements[:60]:
+    # Two passes. The first takes only the preferred route, so a dialog that
+    # lists several ways in does not get answered by whichever happens to sit
+    # highest in the DOM.
+    for preferred_only in (True, False):
+        for ctx in (page, *(f for f in getattr(page, "frames", []) or [])):
+            for selector in candidates:
                 try:
-                    if not el.is_visible():
-                        continue
-                    text = (el.inner_text() or "").strip()
+                    elements = ctx.query_selector_all(selector)
                 except Exception:
                     continue
-                if not text or len(text) > 40:
-                    continue
-                if _REVEAL_EXCLUDE.search(text) or not _REVEAL_TEXT.match(text):
-                    continue
-                # Unconditional. Anything wearing the Submit button's label is
-                # left alone whatever else it looks like.
-                if _SUBMIT_TEXT.search(text):
-                    continue
-                try:
-                    el.click(timeout=5000)
-                    # Lever's control is a real link, not a same-page toggle —
-                    # clicking it navigates. A toggle only needs the settle
-                    # wait; a navigation needs load_state too, and asking for
-                    # both costs nothing when the click was actually a toggle.
+                for el in elements[:60]:
                     try:
-                        page.wait_for_load_state("domcontentloaded", timeout=8000)
+                        if not el.is_visible():
+                            continue
+                        text = (el.inner_text() or "").strip()
                     except Exception:
-                        pass
-                    page.wait_for_timeout(settle_ms)
-                except Exception:
-                    continue
-                for check in (page, *(f for f in getattr(page, "frames", []) or [])):
-                    if form_is_present(check):
-                        return text
+                        continue
+                    if not text or len(text) > 40:
+                        continue
+                    if preferred_only:
+                        if not _REVEAL_PREFERRED.match(text):
+                            continue
+                    elif _REVEAL_EXCLUDE.search(text) or not _REVEAL_TEXT.match(text):
+                        continue
+                    # Unconditional. Anything wearing the Submit button's label
+                    # is left alone whatever else it looks like.
+                    if _SUBMIT_TEXT.search(text):
+                        continue
+                    try:
+                        el.click(timeout=5000)
+                        # Lever's control is a real link, not a same-page
+                        # toggle — clicking it navigates. A toggle only needs
+                        # the settle wait; a navigation needs load_state too,
+                        # and asking for both costs nothing either way.
+                        try:
+                            page.wait_for_load_state("domcontentloaded", timeout=8000)
+                        except Exception:
+                            pass
+                        page.wait_for_timeout(settle_ms)
+                    except Exception:
+                        continue
+                    for check in (page, *(f for f in getattr(page, "frames", []) or [])):
+                        if form_is_present(check):
+                            return text
     return ""
 
 
@@ -1109,6 +1133,7 @@ def fill_form(page, profile: Profile, cover_letter: str = "") -> FillReport:
     _attach_resume(page, profile, report)
     if cover_letter:
         _paste_cover_letter(page, cover_letter, report)
+        _fill_open_prompts(page, cover_letter, report)
 
     # The same control can be seen by more than one pass (a combobox is also a
     # text input), so report each field once.
@@ -2346,6 +2371,67 @@ def _cover_letter_reveal_button(page):
             if is_resume and not is_cover:
                 break  # this button belongs to the resume uploader
     return None
+
+
+# Open-ended prompts that the cover letter answers. Railway asks "why", Vooma
+# asks for context, Agave asks what interests you — all of them are the letter,
+# and all of them were being left blank because they are pre-existing textareas
+# with no "cover letter" in the label.
+_OPEN_PROMPT = re.compile(
+    r"why (?:do you|are you|this|us\b|join)|what interests you|"
+    r"tell us (?:about|why)|anything else|additional (?:info|information|"
+    r"context)|what draws you|motivat|your context|why railway|why are you "
+    r"excited",
+    re.IGNORECASE,
+)
+
+# Prompts that ask for a specific short length. A 280-word letter dropped into
+# "in two sentences" reads worse than a blank box, so these are reported for a
+# human rather than answered.
+_BREVITY = re.compile(
+    r"in (?:one|two|three|1|2|3) sentences?|\bbriefly\b|a few words|"
+    r"(?:max(?:imum)?|no more than|under)\s*\d+\s*(?:words|characters)|"
+    r"\d+\s*words? or (?:less|fewer)",
+    re.IGNORECASE,
+)
+
+
+def _fill_open_prompts(page, letter: str, report: FillReport) -> None:
+    """Answer open-ended essay boxes with the cover letter.
+
+    Separate from `_paste_cover_letter`, which only ever fills a textarea that
+    appeared after the reveal click or one that says "cover letter" outright.
+    A form that asks "Why do you want to work at Railway?" in a box that was
+    always on the page got nothing.
+    """
+    if not letter:
+        return
+    for el in page.query_selector_all("textarea"):
+        try:
+            if not el.is_visible() or not el.is_editable():
+                continue
+            if (el.input_value() or "").strip():
+                continue
+        except Exception:
+            continue
+
+        label, name, el_id, placeholder = _describe(el)
+        blob = f"{label} {name} {el_id} {placeholder}"
+        if is_protected(label, name, el_id, placeholder):
+            continue
+        if not _OPEN_PROMPT.search(blob):
+            continue
+        if _BREVITY.search(blob):
+            report.skipped.append(
+                f"{label or name or el_id}: asks for a short answer — the "
+                "letter would be too long, write this one yourself"
+            )
+            continue
+        try:
+            el.fill(letter)
+            report.filled[label or name or el_id] = "cover letter"
+        except Exception as exc:
+            report.errors.append(f"open prompt {label or name}: {exc}")
 
 
 def _paste_cover_letter(page, letter: str, report: FillReport) -> None:

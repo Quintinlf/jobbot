@@ -128,6 +128,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("canonical_url", "TEXT"),
         ("identity_key", "TEXT"),
         ("sources", "TEXT"),
+        # Posted pay band. Ashby returns it structured and jobbot was
+        # already asking for it, then throwing it away — so the clearest
+        # seniority signal a posting carries never reached the score.
+        ("salary_min", "INTEGER"),
+        ("salary_max", "INTEGER"),
+        ("salary_summary", "TEXT"),
     ):
         if column not in have:
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {ddl}")
@@ -279,6 +285,12 @@ def upsert_job(conn: sqlite3.Connection, row: dict, score, verdict, site=None) -
     duplicate = bool(match) and not same_id
 
     payload = {
+        # Defaults first, so a caller that builds a row by hand — registering
+        # an application sent outside the tool, for instance — does not have to
+        # know every column the schema has grown since.
+        "salary_min": None,
+        "salary_max": None,
+        "salary_summary": "",
         **incoming,
         "score": score.total,
         "score_reasons": json.dumps(score.reasons),
@@ -319,6 +331,8 @@ def upsert_job(conn: sqlite3.Connection, row: dict, score, verdict, site=None) -
                 score=:score, score_reasons=:score_reasons,
                 gate=:gate, gate_evidence=:gate_evidence, knockout=:knockout,
                 worksite=:worksite, worksite_detail=:worksite_detail,
+                salary_min=:salary_min, salary_max=:salary_max,
+                salary_summary=:salary_summary,
                 last_seen=:last_seen,
                 canonical_url=:canonical_url, identity_key=:identity_key,
                 sources=:sources
@@ -345,12 +359,14 @@ def upsert_job(conn: sqlite3.Connection, row: dict, score, verdict, site=None) -
             external_id, title, company, location, url, description, ats,
             board_slug, department, posted_at, score, score_reasons, gate,
             gate_evidence, knockout, worksite, worksite_detail,
+            salary_min, salary_max, salary_summary,
             status, first_seen, last_seen,
             canonical_url, identity_key, sources
         ) VALUES (
             :external_id, :title, :company, :location, :url, :description, :ats,
             :board_slug, :department, :posted_at, :score, :score_reasons, :gate,
             :gate_evidence, :knockout, :worksite, :worksite_detail,
+            :salary_min, :salary_max, :salary_summary,
             :status, :first_seen, :last_seen,
             :canonical_url, :identity_key, :sources
         )

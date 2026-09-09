@@ -91,6 +91,7 @@ def ingest(postings: list[Posting], conn) -> RefreshResult:
             description=posting.description,
             location=posting.location,
             profile_skills=profile_skills,
+            salary_min=posting.salary_min,
         )
 
         row = posting.as_row()
@@ -222,6 +223,9 @@ def rescore(conn) -> RefreshResult:
             description=row["description"] or "",
             location=row["location"] or "",
             profile_skills=profile_skills,
+            # `rescore` runs without the network, so it reads the band that was
+            # stored when the posting was fetched rather than re-fetching it.
+            salary_min=row["salary_min"] if "salary_min" in row.keys() else None,
         )
         conn.execute(
             """

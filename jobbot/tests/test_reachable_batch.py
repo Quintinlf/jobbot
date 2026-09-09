@@ -249,3 +249,156 @@ def test_a_numeral_in_the_subject_is_not_a_level():
                   "Software Engineer (AI)"):
         scored, _, _ = score_posting(title, ENGINEERING_DESC, "Remote - US")
         assert not scored.rejected, f"{title} should be kept"
+
+
+# -- A trade is a trade even when the title says "Engineer" --------------------
+
+REFRIGERATION_DESC = (
+    "Under the direction of the Senior Superintendent, install, maintain and "
+    "repair commercial and domestic refrigeration systems."
+)
+
+
+def test_a_trade_described_under_a_vague_engineer_title_is_dropped():
+    """UCLA's "Service Engineer" is a commercial refrigeration technician. The
+    title matched nothing but the bare "engineer" (+4), the word
+    "refrigeration" never appears in it, and an LA location (+52) carried it to
+    fourth place in a batch of jobs to apply to."""
+    scored, _, _ = score_posting(
+        "Service Engineer", REFRIGERATION_DESC, "Los Angeles, CA"
+    )
+    assert scored.rejected
+    assert "skilled trade" in scored.knockout
+
+
+def test_a_software_role_at_an_hvac_company_survives():
+    """The guard only fires when the title said nothing specific. A building
+    automation startup hiring a Software Engineer says HVAC too."""
+    scored, _, _ = score_posting(
+        "Software Engineer",
+        "Build the control plane for HVAC systems in commercial buildings. "
+        "Python and Go.",
+        "San Francisco",
+    )
+    assert not scored.rejected
+
+
+def test_sourcing_is_recruiting_under_another_name():
+    scored, _, _ = score_posting(
+        "Talent Sourcer, Engineering", ENGINEERING_DESC, "Remote - United States"
+    )
+    assert scored.rejected
+
+
+# -- A letter buys a place in the batch, not the top of it ---------------------
+
+def test_hunt_orders_the_batch_by_score(db, monkeypatch):
+    """A USC "Project Assistant" scoring 16 led a sitting of 25 because it was
+    the one job with a letter written, above a 96-point ML role. You work down
+    the tabs in order, so the order is the recommendation."""
+    import inspect
+
+    from jobbot import __main__ as cli
+
+    source = inspect.getsource(cli.cmd_hunt)
+    assert 'lettered.sort(key=lambda r: -(r["score"] or 0))' in source
+
+
+# -- The description can say which country this is -----------------------------
+
+CANADIAN_DESC = (
+    "Bree is a consumer finance platform building faster, simpler and more "
+    "affordable financial services for Canadians who live paycheck to "
+    "paycheck. 800,000+ Canadians have signed up for Bree. We are looking for "
+    "a Machine Learning Engineer to build and scale ML systems in Canada."
+)
+
+
+def test_a_country_in_the_description_overrides_a_bare_remote():
+    """Bree's "Machine Learning Engineer, Underwriting" listed its location as
+    "Remote", scored 96 — the highest in the queue — and is Canadian. He is not
+    entitled to work in Canada."""
+    scored, _, _ = score_posting(
+        "Machine Learning Engineer, Underwriting", CANADIAN_DESC, "Remote"
+    )
+    assert any("Canada" in r for r in scored.reasons)
+
+
+def test_a_us_company_selling_into_canada_is_not_canadian():
+    """Both halves are required: a country named repeatedly AND the US named
+    nowhere. Otherwise every US fintech with Canadian customers disappears."""
+    desc = (
+        "We are a San Francisco company serving customers in Canada and the "
+        "United States. Canadians make up a third of our users. Python, SQL."
+    )
+    scored, _, _ = score_posting("Software Engineer", desc, "Remote")
+    assert not any("not the US" in r for r in scored.reasons)
+
+
+def test_us_cities_count_as_the_us():
+    """"San Francisco" and "New York" were reading as naming nowhere in the
+    US, which would have flagged San Francisco roles as foreign."""
+    for place in ("San Francisco", "New York", "Menlo Park", "Boston"):
+        assert config.names_us_location(place), place
+    assert not config.names_us_location("Toronto")
+    assert not config.names_us_location("Remote")
+
+
+# -- The posted band says which rung the requisition is for --------------------
+
+def test_a_senior_band_is_penalised():
+    """Blaxel posts a Site Reliability Engineer at $175K-$250K and a Software
+    Engineer at $140K-$190K. To a scorer reading only words those are the same
+    seniority, and they are not."""
+    senior, _, _ = score_posting(
+        "Site Reliability Engineer", ENGINEERING_DESC, "San Francisco",
+        salary_min=175_000,
+    )
+    entry, _, _ = score_posting(
+        "Site Reliability Engineer", ENGINEERING_DESC, "San Francisco",
+        salary_min=140_000,
+    )
+    assert senior.total < entry.total
+    assert any("written for a senior" in r for r in senior.reasons)
+
+
+def test_no_published_band_costs_nothing():
+    """Most boards publish nothing. Silence must not be read as a signal."""
+    quiet, _, _ = score_posting(
+        "Software Engineer", ENGINEERING_DESC, "San Francisco", salary_min=None
+    )
+    middling, _, _ = score_posting(
+        "Software Engineer", ENGINEERING_DESC, "San Francisco", salary_min=160_000
+    )
+    assert quiet.total == middling.total
+    assert not any("band" in r for r in quiet.reasons)
+
+
+def test_ashby_salary_is_read_off_the_posting():
+    """`includeCompensation=true` was already on the request URL and the answer
+    was thrown away."""
+    from jobbot.boards import _ashby_salary
+
+    job = {
+        "compensation": {
+            "scrapeableCompensationSalarySummary": "$175K - $250K",
+            "summaryComponents": [
+                {"compensationType": "EquityPercentage", "interval": "NONE",
+                 "minValue": 0.05, "maxValue": 0.5},
+                {"compensationType": "Salary", "interval": "1 YEAR",
+                 "currencyCode": "USD", "minValue": 175000, "maxValue": 250000},
+            ],
+        }
+    }
+    assert _ashby_salary(job) == (175000, 250000, "$175K - $250K")
+
+
+def test_equity_alone_is_not_a_salary():
+    """A percentage is not a number that can be compared against a floor."""
+    from jobbot.boards import _ashby_salary
+
+    job = {"compensation": {"summaryComponents": [
+        {"compensationType": "EquityPercentage", "interval": "NONE",
+         "minValue": 0.05, "maxValue": 0.5},
+    ]}}
+    assert _ashby_salary(job) == (None, None, "")

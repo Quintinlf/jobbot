@@ -137,8 +137,8 @@ def test_local_postings_survive_a_broken_progress_callback(monkeypatch):
         )
     ]
     # `refresh` refuses to run with no verified boards at all, and that check
-    # comes first. Without this the test only passed because a real
-    # data/verified_boards.json happened to be sitting on the machine.
+    # comes first. Without this the test passes only on a machine that happens
+    # to have a real data/verified_boards.json sitting next to it.
     monkeypatch.setattr(boards, "load_verified", lambda: {"acme": "greenhouse"})
     monkeypatch.setattr(boards, "fetch_all", lambda *a, **k: [])
     monkeypatch.setattr(boards_local, "fetch_all_local", lambda: sentinel)
